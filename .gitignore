@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Python environment
+.venv/
+env/
+*.egg-info/
+
+# Output files
+*.tif
+*.png
+*.jpg
+*.jpeg
+*.shp
+*.prj
+*.shx
+*.cpg
+*.qmd
+
+# Pyenv version file
+.python-version
+
+# Logs
+*.log
