@@ -11,7 +11,7 @@ def make_polygon_filepath(path: str) -> str:
     return str(p.with_name(p.stem + '_polygon.shp'))
 
 
-def lines_to_polygon(input_lines_shp: str, encoding: str = 'utf-8') -> str:
+def lines_to_polygon(input_lines_shp: str, encoding: str | None = 'utf-8') -> str:
     gdf = gpd.read_file(input_lines_shp, encoding=encoding)
 
     all_lines = []
