@@ -9,10 +9,10 @@ from clusterable import NDVIData
 class RasterClipper:
     def __init__(
             self, 
-            ndvi: NDVIData, 
-            boundary_path: str, 
-            encoding: str = 'utf-8', 
-            preprocess_geometry: Callable[[str, str | None], None] | None = None
+            ndvi: NDVIData, # source
+            boundary_path: str, # required line or polygon if use lines_to_polygon
+            encoding: str = 'utf-8', # sometimes required 'latin1'
+            preprocess_geometry: Callable[[str, str | None], None] | None = None # transform boundary_path to polygon
     ):
         self.ndvi = ndvi
         self.boundary_path = boundary_path
@@ -45,6 +45,6 @@ class RasterClipper:
         })
     
         clipped_ndvi = NDVIData.from_data(out_image, out_meta, crs=self.ndvi.crs)
-        print("✂️ NDVI clipped into new NDVIData")
+        print("NDVI clipped into new NDVIData")
         return clipped_ndvi
     
