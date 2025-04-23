@@ -81,3 +81,24 @@ def get_ndvi_stats_by_ranges(ndvi_data, step=0.05):
         else:
             print(f"\nДиапазон: {lower:.2f} - {upper:.2f} - Нет данных")
 
+
+from pyproj import CRS, Transformer
+
+def convert_pixel_size_to_meters(pixel_width_deg, pixel_height_deg, center_lon, center_lat):
+    crs_src = CRS("EPSG:4326")
+    utm_zone = int((center_lon + 180) / 6) + 1
+    is_northern = center_lat >= 0
+    epsg_code = 32600 + utm_zone if is_northern else 32700 + utm_zone
+    crs_dst = CRS.from_epsg(epsg_code)
+
+    transformer = Transformer.from_crs(crs_src, crs_dst, always_xy=True)
+
+    x0, y0 = transformer.transform(center_lon, center_lat)
+    x1, _ = transformer.transform(center_lon + pixel_width_deg, center_lat)
+    _, y1 = transformer.transform(center_lon, center_lat - pixel_height_deg)
+
+    pixel_width_m = abs(x1 - x0)
+    pixel_height_m = abs(y1 - y0)
+
+    return pixel_width_m, pixel_height_m
+

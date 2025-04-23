@@ -21,6 +21,6 @@ if __name__ == '__main__':
     # analyze_ndvi(clipped_ndvi.data)
     # get_ndvi_stats_by_ranges(clipped_ndvi.data)
     clipped_ndvi.save('clippedd.tif')
-    result = KMeansRasterClustering.fit(clipped_ndvi, 3)
-    KMeansRasterClustering.export_shapefile(result, 'cluster_with.shp', clipped_ndvi.transform, clipped_ndvi.crs)
+    result = KMeansRasterClustering.fit(clipped_ndvi, 3, 50)
+    KMeansRasterClustering.export_shapefile(result, 'cluster_with_50.shp', clipped_ndvi.transform, clipped_ndvi.crs)
     KMeansRasterClustering.save_clustered_raster(result, 'clustered.tif', clipped_ndvi.profile)
