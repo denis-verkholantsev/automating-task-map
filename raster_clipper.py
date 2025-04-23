@@ -44,7 +44,7 @@ class RasterClipper:
             "transform": out_transform,
         })
     
-        clipped_ndvi = NDVIData.from_data(out_image, out_meta, crs=self.ndvi.crs)
+        clipped_ndvi = NDVIData.from_data(out_image, out_meta, self.ndvi.crs, self.ndvi.pixel_width, self.ndvi.pixel_height)
         print("NDVI clipped into new NDVIData")
         return clipped_ndvi
     
