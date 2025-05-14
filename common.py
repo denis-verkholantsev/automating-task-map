@@ -102,3 +102,12 @@ def convert_pixel_size_to_meters(pixel_width_deg, pixel_height_deg, center_lon, 
 
     return pixel_width_m, pixel_height_m
 
+
+def clusters_info(result, unique, flat):
+    print("Информация о кластерах:")
+    for val in unique:
+        cluster_pixels = flat[result.flatten() == val]  # Пиксели, принадлежащие текущему кластеру
+        min_value = np.min(cluster_pixels)
+        max_value = np.max(cluster_pixels)
+        print(f"Кластер {val}: min = {min_value}, max = {max_value}")
+

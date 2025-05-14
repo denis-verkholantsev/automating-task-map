@@ -4,12 +4,8 @@ from clusterable import NDVIData
 from cluster import KMeansRasterClustering
 
 
-if __name__ == '__main__':
+def run():
     ndvi = NDVIData.load("/home/dverholancev/study/degree/src/20230608_F14_Micasense_NDVI.tif")
-    # ndvi.load()
-    # ndvi.clean()
-    # analyze_ndvi(ndvi.data)
-
     clipper = RasterClipper(
         ndvi,
         "/home/dverholancev/study/degree/src/boundary_field_14.shp",
@@ -18,9 +14,10 @@ if __name__ == '__main__':
 
     clipped_ndvi = clipper.clip()
     clipped_ndvi.clean()
-    # analyze_ndvi(clipped_ndvi.data)
-    # get_ndvi_stats_by_ranges(clipped_ndvi.data)
     clipped_ndvi.save('clippedd.tif')
-    result = KMeansRasterClustering.fit(clipped_ndvi, 3, 50)
-    KMeansRasterClustering.export_shapefile(result, 'cluster_with_50.shp', clipped_ndvi.transform, clipped_ndvi.crs)
-    KMeansRasterClustering.save_clustered_raster(result, 'clustered.tif', clipped_ndvi.profile)
+    result = KMeansRasterClustering.fit(clipped_ndvi, 5, 500)
+    KMeansRasterClustering.export_shapefile(result, 'cluster_with_400.shp', clipped_ndvi.transform, clipped_ndvi.crs)
+
+
+if __name__ == '__main__':
+    run()

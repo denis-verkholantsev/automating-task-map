@@ -12,7 +12,7 @@ class RasterClipper:
             ndvi: NDVIData, # source
             boundary_path: str, # required line or polygon if use lines_to_polygon
             encoding: str = 'utf-8', # sometimes required 'latin1'
-            preprocess_geometry: Callable[[str, str | None], None] | None = None # transform boundary_path to polygon
+            preprocess_geometry: Callable[[str, str | None], None] | str = None # transform boundary_path to polygon
     ):
         self.ndvi = ndvi
         self.boundary_path = boundary_path
