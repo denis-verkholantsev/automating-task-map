@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from shapely.ops import polygonize
 from pathlib import Path
+import math
 
 
 GEOM_TYPES_TO_RETURN = {"Polygon", 'MultiPolygon'}
@@ -111,3 +112,10 @@ def clusters_info(result, unique, flat):
         max_value = np.max(cluster_pixels)
         print(f"Кластер {val}: min = {min_value}, max = {max_value}")
 
+
+def get_block_size(min_area_m2, pixel_width_m, pixel_height_m):
+    block_area_m2 = min_area_m2 / 0.33
+    block_side_m = block_area_m2 ** 0.5
+    width_px = math.ceil(block_side_m / pixel_width_m)
+    height_px = math.ceil(block_side_m / pixel_height_m)
+    return height_px, width_px

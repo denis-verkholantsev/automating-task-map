@@ -5,17 +5,24 @@ import numpy as np
 from sklearn.cluster import KMeans
 from rasterio.features import shapes
 from shapely.geometry import shape
-from scipy.ndimage import label
+from scipy.ndimage import label, generate_binary_structure, binary_dilation
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 
 from clusterable import NDVIData
-from common import clusters_info
+from common import clusters_info, get_block_size
+from collections import deque
+from functools import partial
 
 WORKERS = 4
 
-
 class BaseRasterClustering(ABC):
+
+    PHRASE_TO_CLEAN_METHOD = {
+        'bfs_most_common': '_process_block_bfs_and_most_common_cluster',
+        'bfs_popular_nearest': '_process_block_bfs_and_popular_nearest_cluster',
+        'label': '_process_block_label'
+    }
 
     @classmethod
     def fit(cls, data, ndvi: NDVIData) -> None:
@@ -26,47 +33,257 @@ class BaseRasterClustering(ABC):
         pass
 
     @staticmethod
-    def _process_block(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float) -> np.ndarray:
-        labeled_array, _ = label(block)
-        pixel_area_m2 = pixel_width * pixel_height  # Размер одного пикселя в м²
-        min_area_pixels = int(min_area / pixel_area_m2)
+    def _process_block_with_most_common_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity=4) -> np.ndarray:
+        processed = block.copy()
+        nan_mask = np.isnan(processed)
+        processed[nan_mask] = -1  # Временная метка для NaN
 
-        # print(min_area_pixels)
+        # Найдём наиболее популярное значение (кластер) в блоке
+        valid_labels = processed[processed > 0]
+        most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
 
-        # Подсчёт площади каждого региона (кол-во пикселей с каждым label)
-        counts = np.bincount(labeled_array.ravel())
+        if most_common_label > 0:
+            processed[:, :] = most_common_label
+        else:
+            processed[:, :] = np.nan  # если нет валидных значений
 
-        # Массив маски — True для маленьких регионов
-        small_regions = np.isin(labeled_array, np.where(counts < min_area_pixels)[0])
+        processed[processed == -1] = np.nan
+        return processed
 
-        # Удаляем маленькие регионы
-        new_block = block.copy()
-        new_block[small_regions] = np.nan
 
-        return new_block
+    @staticmethod
+    def _process_block_bfs_with_most_common_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity = 4) -> np.ndarray:
+        min_pixels = max(1, int(min_area / (pixel_width * pixel_height)))
+        processed = block.copy()
+        nan_mask = np.isnan(processed)
+        processed[nan_mask] = -1  # временная метка для NaN
+
+        h, w = processed.shape
+        visited = np.zeros((h, w), dtype=bool)
+
+        # Наиболее частая метка
+        valid_labels = processed[processed > 0]
+        most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
+
+        directions_4 = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        directions_8 = directions_4 + [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        directions = directions_4 if connectivity == 4 else directions_8
+
+        def bfs(start_y, start_x, label_value):
+            queue = deque()
+            queue.append((start_y, start_x))
+            region = [(start_y, start_x)]
+            visited[start_y, start_x] = True
+
+            while queue:
+                y, x = queue.popleft()
+                for dy, dx in directions:
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < h and 0 <= nx < w:
+                        if not visited[ny, nx] and processed[ny, nx] == label_value:
+                            visited[ny, nx] = True
+                            queue.append((ny, nx))
+                            region.append((ny, nx))
+            return region
+
+        for y in range(h):
+            for x in range(w):
+                if visited[y, x]:
+                    continue
+                label_value = processed[y, x]
+                if label_value <= 0:
+                    continue
+
+                region = bfs(y, x, label_value)
+
+                if len(region) < min_pixels and most_common_label > 0 and most_common_label != label_value:
+                    for ry, rx in region:
+                        processed[ry, rx] = most_common_label
+
+        processed[processed == -1] = np.nan
+        return processed
+
+    @staticmethod
+    def _process_block_bfs_with_nearest_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity = 4) -> np.ndarray:
+        min_pixels = max(1, int(min_area / (pixel_width * pixel_height)))
+        processed = block.copy()
+        nan_mask = np.isnan(processed)
+        processed[nan_mask] = -1  # временная метка для NaN
+
+        h, w = processed.shape
+        visited = np.zeros((h, w), dtype=bool)
+
+        directions_4 = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        directions_8 = directions_4 + [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        directions = directions_4 if connectivity == 4 else directions_8
+
+        def bfs(start_y, start_x, label_value):
+            queue = deque()
+            queue.append((start_y, start_x))
+            region = [(start_y, start_x)]
+            visited[start_y, start_x] = True
+
+            while queue:
+                y, x = queue.popleft()
+                for dy, dx in directions:
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < h and 0 <= nx < w:
+                        if not visited[ny, nx] and processed[ny, nx] == label_value:
+                            visited[ny, nx] = True
+                            queue.append((ny, nx))
+                            region.append((ny, nx))
+            return region
+
+        for y in range(h):
+            for x in range(w):
+                if visited[y, x]:
+                    continue
+                label_value = processed[y, x]
+                if label_value <= 0:
+                    continue
+
+                region = bfs(y, x, label_value)
+
+                from collections import Counter
+
+                if len(region) < min_pixels:
+                    neighbor_labels = []
+
+                    for ry, rx in region:
+                        for dy, dx in directions:
+                            ny, nx = ry + dy, rx + dx
+                            if 0 <= ny < h and 0 <= nx < w:
+                                neighbor_label = processed[ny, nx]
+                                if neighbor_label > 0 and neighbor_label != label_value:
+                                    neighbor_labels.append(neighbor_label)
+
+                    if neighbor_labels:
+                        most_common_neighbor = Counter(neighbor_labels).most_common(1)[0][0]
+                        for ry, rx in region:
+                            processed[ry, rx] = most_common_neighbor
+
+        processed[processed == -1] = np.nan
+        return processed
+
+    @staticmethod
+    def _process_block_label_with_most_common_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity = 4) -> np.ndarray:
+        min_pixels = max(1, int(min_area / (pixel_width * pixel_height)))
+        processed = block.copy()
+        nan_mask = np.isnan(processed)
+        processed[nan_mask] = -1  # Временная метка для NaN
+
+        structure = None
+        if connectivity == 4:
+            structure = generate_binary_structure(2, 1)  # 2D, связность 1 (четыре соседа)
+        elif connectivity == 8:
+            structure = generate_binary_structure(2, 2)  # 2D, связность 2 (восемь соседей)
+
+        # Найдём наиболее популярное значение (кластер) в блоке
+        valid_labels = processed[processed > 0]
+        most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
+
+        # Обрабатываем каждое уникальное значение отдельно (каждый кластер)
+        for label_value in np.unique(processed):
+            if label_value <= 0:
+                continue  # Пропускаем фон и NaN
+
+            # Маска только данного кластера
+            mask = processed == label_value
+
+            # Находим связные компоненты внутри кластера
+            labeled, num_features = label(mask, structure)
+
+            for region_id in range(1, num_features + 1):
+                region_mask = labeled == region_id
+                region_area = np.sum(region_mask)
+
+                if region_area < min_pixels and most_common_label > 0 and most_common_label != label_value:
+                    processed[region_mask] = most_common_label
+
+        processed[processed == -1] = np.nan
+        return processed
+
+    @staticmethod
+    def _process_block_label_with_nearest_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity = 4) -> np.ndarray:
+        min_pixels = max(1, int(min_area / (pixel_width * pixel_height)))
+        processed = block.copy()
+        nan_mask = np.isnan(processed)
+        processed[nan_mask] = -1  # Временная метка для NaN
+
+        structure = None
+        if connectivity == 4:
+            structure = generate_binary_structure(2, 1)  # 2D, связность 1 (четыре соседа)
+        elif connectivity == 8:
+            structure = generate_binary_structure(2, 2)  # 2D, связность 2 (восемь соседей)
+
+        # Найдём наиболее популярное значение (кластер) в блоке
+        valid_labels = processed[processed > 0]
+        most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
+
+        # Обрабатываем каждое уникальное значение отдельно (каждый кластер)
+        for label_value in np.unique(processed):
+            if label_value <= 0:
+                continue  # Пропускаем фон и NaN
+
+            # Маска только данного кластера
+            mask = processed == label_value
+
+            # Находим связные компоненты внутри кластера
+            labeled, num_features = label(mask, structure)
+
+            for region_id in range(1, num_features + 1):
+                region_mask = labeled == region_id
+                region_area = np.sum(region_mask)
+
+                if region_area >= min_pixels:
+                    continue
+
+                # Получим координаты граничных пикселей
+                border = binary_dilation(region_mask, structure) & ~region_mask
+                neighbor_labels = processed[border]
+                neighbor_labels = neighbor_labels[(neighbor_labels > 0) & (neighbor_labels != label_value)]
+
+                if neighbor_labels.size > 0:
+                    new_label = np.bincount(neighbor_labels.astype(int)).argmax()
+                    processed[region_mask] = new_label
+
+        processed[processed == -1] = np.nan
+        return processed
 
     @classmethod
-    def _process_block_wrapper(cls, args):
+    def get_clean_method(cls, phrase: str):
+        method_name = cls.PHRASE_TO_CLEAN_METHOD[phrase]
+        return getattr(cls, method_name)
+
+    @staticmethod
+    def _process_block_wrapper(args, clean_method):
         block, min_area, pixel_width, pixel_height = args
-        return cls._process_block(block, min_area, pixel_width, pixel_height)
+        return clean_method(block, min_area, pixel_width, pixel_height)
 
     @classmethod
-    def _clean_small_clusters(cls, clustered, pixel_width, pixel_height, min_area: float = 50, block_size=(2000, 2000)) -> np.ndarray:
-        # Определение размера блока (например, 1000x1000 пикселей)
-        _, n_rows, n_cols = clustered.shape
+    def _clean_small_clusters(cls, clustered, pixel_width, pixel_height, min_area: float = 50, block_size=(50, 50), clean_method=None) -> np.ndarray:
+        n_rows, n_cols = clustered.shape
         processed = np.zeros_like(clustered)
 
+        # Prepare blocks for processing
         blocks = []
         for i in range(0, n_rows, block_size[0]):
             for j in range(0, n_cols, block_size[1]):
                 block = clustered[i:i+block_size[0], j:j+block_size[1]]
                 blocks.append((block, min_area, pixel_width, pixel_height))
 
-        # Используем многозадачность для параллельной обработки блоков
-        with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-            results = list(tqdm(executor.map(cls._process_block_wrapper, blocks), total=len(blocks), desc="Processing blocks"))
+        clean_func = cls.get_clean_method(clean_method)  # или любой другой
+        wrapper = partial(cls._process_block_wrapper, clean_method=clean_func)
 
-        # Объединяем обработанные блоки в один массив
+        # Process blocks in parallel
+        with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+            results = list(tqdm(
+                executor.map(wrapper, blocks),
+                total=len(blocks),
+                desc="Processing blocks"
+            ))
+
+        # Reconstruct the full array
         idx = 0
         for i in range(0, n_rows, block_size[0]):
             for j in range(0, n_cols, block_size[1]):
@@ -77,44 +294,58 @@ class BaseRasterClustering(ABC):
 
 
 class KMeansRasterClustering(BaseRasterClustering):
-
     @classmethod
-    def fit(cls, ndvi: NDVIData, n_clusters: int, min_cluster_area: float = 50) -> np.ndarray:
-        flat = ndvi.data.flatten()
+    def fit(cls, ndvi: NDVIData, n_clusters: int, min_cluster_area: float = 50,  clean_method: str | None = 'bfs_most_common') -> np.ndarray:
+        # Flatten and prepare data
+        data_2d = ndvi.data.squeeze()  # Ensure we're working with 2D
+        flat = data_2d.flatten()
         mask = ~np.isnan(flat)
         valid_data = flat[mask].reshape(-1, 1)
 
+        # Run KMeans clustering
         print(f"Running KMeans with {n_clusters} clusters...")
         kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(valid_data)
 
+        # Reconstruct clustered array
         clustered = np.full(flat.shape, np.nan)
-        clustered[mask] = kmeans.labels_
-        result = clustered.reshape(ndvi.data.shape)
+        clustered[mask] = kmeans.labels_ + 1  # +1 to avoid 0 being a cluster
+        result = clustered.reshape(data_2d.shape)
         print("Clustering done.")
 
+        # Analyze clusters
         unique = np.unique(result[~np.isnan(result)])
         clusters_info(result, unique, flat)
 
+        # Clean small clusters if requested
         if min_cluster_area:
-            result = cls._clean_small_clusters(result, ndvi.pixel_width, ndvi.pixel_height, min_cluster_area)
+            result = cls._clean_small_clusters(
+                result,
+                ndvi.pixel_width,
+                ndvi.pixel_height,
+                min_cluster_area,
+                block_size=get_block_size(min_cluster_area, ndvi.pixel_width, ndvi.pixel_height),
+                clean_method=clean_method,
+            )
             print("Clean small clusters done.")
-            print("Осталось уникальных значений:", np.unique(result[~np.isnan(result)]))
+            print("Remaining unique values:", np.unique(result[~np.isnan(result)]))
 
         return result
 
     @staticmethod
     def export_shapefile(data, output_shp: str, transform, crs) -> None:
-        mask = ~np.isnan(data)
-        prepared_data = np.nan_to_num(data, nan=-1).astype(np.int16)
+        # Ensure we're working with 2D data
+        data_2d = data.squeeze()
+
+        mask = ~np.isnan(data_2d)
+        prepared_data = np.nan_to_num(data_2d, nan=-1).astype(np.int16)
 
         shape_gen = shapes(prepared_data, mask=mask, transform=transform)
         shapes_list = [(shape(g), int(v)) for g, v in shape_gen]
+
         if not shapes_list:
-            raise ValueError("Нет доступных кластеров для экспорта (все удалены?)")
+            raise ValueError("No clusters available for export (all removed?)")
 
         geoms, ids = zip(*shapes_list)
-
         gdf = gpd.GeoDataFrame({'cluster_id': ids, 'geometry': geoms}, crs=crs)
         gdf.to_file(output_shp)
         print(f"Shapefile saved to {output_shp}")
-
