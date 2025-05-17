@@ -7,6 +7,7 @@ import math
 
 
 GEOM_TYPES_TO_RETURN = {"Polygon", 'MultiPolygon'}
+MIN_AREA_BLOCK_PART = 3
 
 
 def make_polygon_filepath(path: str) -> str:
@@ -113,9 +114,16 @@ def clusters_info(result, unique, flat):
         print(f"Кластер {val}: min = {min_value}, max = {max_value}")
 
 
-def get_block_size(min_area_m2, pixel_width_m, pixel_height_m):
-    block_area_m2 = min_area_m2 / 0.33
-    block_side_m = block_area_m2 ** 0.5
-    width_px = math.ceil(block_side_m / pixel_width_m)
-    height_px = math.ceil(block_side_m / pixel_height_m)
-    return height_px, width_px
+def get_block_size(block_size: tuple[float, float], min_area_m2: float,
+                   pixel_width_m: float, pixel_height_m: float) -> tuple[float, float]:
+    if block_size is None:
+        block_area_m2 = min_area_m2 / (1 / MIN_AREA_BLOCK_PART)
+        block_side_m = block_area_m2 ** 0.5
+        block_size = (block_side_m, block_side_m)
+
+    return get_block_size_from_meters_to_px(block_size, pixel_width_m, pixel_height_m)
+
+def get_block_size_from_meters_to_px(block_size: tuple[float, float],
+                                     pixel_width_m: float, pixel_height_m: float) -> tuple[float, float]:
+    return int(block_size[0] // pixel_width_m), int(block_size[1] // pixel_height_m)
+

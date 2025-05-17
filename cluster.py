@@ -1,5 +1,4 @@
-from abc import ABC, abstractmethod
-import rasterio
+from abc import ABC
 import geopandas as gpd
 import numpy as np
 from sklearn.cluster import KMeans
@@ -8,20 +7,23 @@ from shapely.geometry import shape
 from scipy.ndimage import label, generate_binary_structure, binary_dilation
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
+from collections import deque
+from functools import partial
 
 from clusterable import NDVIData
 from common import clusters_info, get_block_size
-from collections import deque
-from functools import partial
+from exceptions import ArgumentException
 
 WORKERS = 4
 
 class BaseRasterClustering(ABC):
 
     PHRASE_TO_CLEAN_METHOD = {
-        'bfs_most_common': '_process_block_bfs_and_most_common_cluster',
-        'bfs_popular_nearest': '_process_block_bfs_and_popular_nearest_cluster',
-        'label': '_process_block_label'
+        'most_common_label': '_process_block_with_most_common_label',
+        'bfs_most_common': '_process_block_bfs_with_most_common_label',
+        'bfs_nearest': '_process_block_bfs_with_nearest_label',
+        'label_most_common': '_process_block_label_with_most_common_label',
+        'label_nearest': '_process_block_label_with_nearest_label',
     }
 
     @classmethod
@@ -218,7 +220,6 @@ class BaseRasterClustering(ABC):
 
         # Найдём наиболее популярное значение (кластер) в блоке
         valid_labels = processed[processed > 0]
-        most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
 
         # Обрабатываем каждое уникальное значение отдельно (каждый кластер)
         for label_value in np.unique(processed):
@@ -261,7 +262,8 @@ class BaseRasterClustering(ABC):
         return clean_method(block, min_area, pixel_width, pixel_height)
 
     @classmethod
-    def _clean_small_clusters(cls, clustered, pixel_width, pixel_height, min_area: float = 50, block_size=(50, 50), clean_method=None) -> np.ndarray:
+    def _clean_small_clusters(cls, clustered, pixel_width, pixel_height,
+                              min_area: float = 50, block_size=(50, 50), clean_method=None) -> np.ndarray:
         n_rows, n_cols = clustered.shape
         processed = np.zeros_like(clustered)
 
@@ -295,7 +297,17 @@ class BaseRasterClustering(ABC):
 
 class KMeansRasterClustering(BaseRasterClustering):
     @classmethod
-    def fit(cls, ndvi: NDVIData, n_clusters: int, min_cluster_area: float = 50,  clean_method: str | None = 'bfs_most_common') -> np.ndarray:
+    def fit(cls,
+            ndvi: NDVIData,
+            n_clusters: int,
+            min_cluster_area: float = 50,
+            clean_method: str | None = 'most_common_label',
+            block_size: tuple[float, float] | None = (1.5, 1.5),
+            workers: int | None = WORKERS) -> np.ndarray:
+
+        if clean_method == 'most_common_label' and not block_size:
+            raise ArgumentException('need block size for most_common_label method')
+
         # Flatten and prepare data
         data_2d = ndvi.data.squeeze()  # Ensure we're working with 2D
         flat = data_2d.flatten()
@@ -323,11 +335,10 @@ class KMeansRasterClustering(BaseRasterClustering):
                 ndvi.pixel_width,
                 ndvi.pixel_height,
                 min_cluster_area,
-                block_size=get_block_size(min_cluster_area, ndvi.pixel_width, ndvi.pixel_height),
+                block_size=get_block_size(block_size, min_cluster_area, ndvi.pixel_width, ndvi.pixel_height),
                 clean_method=clean_method,
             )
-            print("Clean small clusters done.")
-            print("Remaining unique values:", np.unique(result[~np.isnan(result)]))
+            print(f'Clean small clusters done.\nRemaining unique values: {np.unique(result[~np.isnan(result)])}')
 
         return result
 
