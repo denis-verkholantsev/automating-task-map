@@ -1,13 +1,14 @@
 from abc import ABC
 import geopandas as gpd
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
+from hdbscan import HDBSCAN
 from rasterio.features import shapes
 from shapely.geometry import shape
 from scipy.ndimage import label, generate_binary_structure, binary_dilation
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
-from collections import deque
+from collections import deque, OrderedDict
 from functools import partial
 
 from clusterable import NDVIData
@@ -31,8 +32,28 @@ class BaseRasterClustering(ABC):
         pass
 
     @staticmethod
-    def export_shapefile(data, output_shp: str, transform, crs) -> None:
-        pass
+    def export_shapefile(data, output_shp: str, transform, crs, stats: dict=None) -> gpd.GeoDataFrame:
+        # Ensure we're working with 2D data
+        data_2d = data.squeeze()
+        mask = ~np.isnan(data_2d)
+        prepared_data = np.nan_to_num(data_2d, nan=-1).astype(np.int16)
+
+        shape_gen = shapes(prepared_data, mask=mask, transform=transform)
+        shapes_list = [(shape(g), int(v)) for g, v in shape_gen]
+
+        if not shapes_list:
+            raise ValueError("No clusters available for export (all removed?)")
+
+        geoms, ids = zip(*shapes_list)
+        data_to_gdf = {'cluster_id': ids, 'geometry': geoms}
+        if stats:
+            means = [stats[cluster_id]['mean'] for cluster_id in ids]
+            data_to_gdf['mean'] = means
+        gdf = gpd.GeoDataFrame(data_to_gdf, crs=crs)
+        gdf.to_file(output_shp)
+        print(f"Shapefile saved to {output_shp}")
+
+        return gdf
 
     @staticmethod
     def _process_block_with_most_common_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity=4) -> np.ndarray:
@@ -218,9 +239,6 @@ class BaseRasterClustering(ABC):
         elif connectivity == 8:
             structure = generate_binary_structure(2, 2)  # 2D, связность 2 (восемь соседей)
 
-        # Найдём наиболее популярное значение (кластер) в блоке
-        valid_labels = processed[processed > 0]
-
         # Обрабатываем каждое уникальное значение отдельно (каждый кластер)
         for label_value in np.unique(processed):
             if label_value <= 0:
@@ -299,11 +317,13 @@ class KMeansRasterClustering(BaseRasterClustering):
     @classmethod
     def fit(cls,
             ndvi: NDVIData,
-            n_clusters: int,
-            min_cluster_area: float = 50,
+            n_clusters: int | None = 3,
+            min_cluster_area: float | None = 50,
             clean_method: str | None = 'most_common_label',
             block_size: tuple[float, float] | None = (1.5, 1.5),
-            workers: int | None = WORKERS) -> np.ndarray:
+            use_mini_batch: bool | None = False,
+            batch_size: int | None = 1000000,
+            workers: int | None = WORKERS) -> tuple[np.ndarray, dict]:
 
         if clean_method == 'most_common_label' and not block_size:
             raise ArgumentException('need block size for most_common_label method')
@@ -316,17 +336,23 @@ class KMeansRasterClustering(BaseRasterClustering):
 
         # Run KMeans clustering
         print(f"Running KMeans with {n_clusters} clusters...")
-        kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(valid_data)
+        if use_mini_batch:
+            kmeans = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=batch_size)
+            kmeans.fit(valid_data)
+            labels = kmeans.predict(valid_data)
+        else:
+            kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(valid_data)
+            labels = kmeans.labels_
 
         # Reconstruct clustered array
         clustered = np.full(flat.shape, np.nan)
-        clustered[mask] = kmeans.labels_ + 1  # +1 to avoid 0 being a cluster
+        clustered[mask] = labels + 1  # +1 to avoid 0 being a cluster
         result = clustered.reshape(data_2d.shape)
         print("Clustering done.")
 
         # Analyze clusters
         unique = np.unique(result[~np.isnan(result)])
-        clusters_info(result, unique, flat)
+        stats = clusters_info(result, unique, flat)
 
         # Clean small clusters if requested
         if min_cluster_area:
@@ -340,23 +366,44 @@ class KMeansRasterClustering(BaseRasterClustering):
             )
             print(f'Clean small clusters done.\nRemaining unique values: {np.unique(result[~np.isnan(result)])}')
 
+        return result, stats
+
+
+class HDBSCANRasterClustering(BaseRasterClustering):
+    @classmethod
+    def fit(cls,
+            ndvi: NDVIData,
+            min_cluster_area: float = 50,
+            min_samples: int | None = None,
+            workers: int | None = WORKERS) -> np.ndarray:
+
+        min_cluster_area = max(1, int(min_cluster_area / (ndvi.pixel_width * ndvi.pixel_height)))
+
+        # Flatten and prepare data
+        data_2d = ndvi.data.squeeze()  # Ensure we're working with 2D
+        flat = data_2d.flatten()
+        mask = ~np.isnan(flat)
+        valid_data = flat[mask].reshape(-1, 1)
+
+        print("Running HDBSCAN clustering...")
+        clusterer = HDBSCAN(
+            min_cluster_size=min_cluster_area,
+            min_samples=min_samples,
+            core_dist_n_jobs=workers,
+            algorithm='best',
+            leaf_size=15,
+        ).fit(valid_data)
+
+        labels = clusterer.labels_  # -1 is noise
+
+        # Reconstruct clustered array
+        clustered = np.full(flat.shape, np.nan)
+        clustered[mask] = labels + 1
+        result = clustered.reshape(data_2d.shape)
+        print("Clustering done.")
+
+        # Analyze clusters
+        unique = np.unique(result[~np.isnan(result)])
+        clusters_info(result, unique, flat)
+
         return result
-
-    @staticmethod
-    def export_shapefile(data, output_shp: str, transform, crs) -> None:
-        # Ensure we're working with 2D data
-        data_2d = data.squeeze()
-
-        mask = ~np.isnan(data_2d)
-        prepared_data = np.nan_to_num(data_2d, nan=-1).astype(np.int16)
-
-        shape_gen = shapes(prepared_data, mask=mask, transform=transform)
-        shapes_list = [(shape(g), int(v)) for g, v in shape_gen]
-
-        if not shapes_list:
-            raise ValueError("No clusters available for export (all removed?)")
-
-        geoms, ids = zip(*shapes_list)
-        gdf = gpd.GeoDataFrame({'cluster_id': ids, 'geometry': geoms}, crs=crs)
-        gdf.to_file(output_shp)
-        print(f"Shapefile saved to {output_shp}")

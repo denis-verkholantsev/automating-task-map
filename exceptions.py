@@ -13,3 +13,6 @@ class BaseAppException(Exception):
 
 class ArgumentException(BaseAppException):
     pass
+
+class CompressException(BaseAppException):
+    pass

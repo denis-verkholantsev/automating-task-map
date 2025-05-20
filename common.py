@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from shapely.ops import polygonize
 from pathlib import Path
-import math
+import time
+import pandas as pd
 
 
 GEOM_TYPES_TO_RETURN = {"Polygon", 'MultiPolygon'}
@@ -107,11 +108,16 @@ def convert_pixel_size_to_meters(pixel_width_deg, pixel_height_deg, center_lon, 
 
 def clusters_info(result, unique, flat):
     print("Информация о кластерах:")
+    stats = {}
     for val in unique:
         cluster_pixels = flat[result.flatten() == val]  # Пиксели, принадлежащие текущему кластеру
         min_value = np.min(cluster_pixels)
         max_value = np.max(cluster_pixels)
-        print(f"Кластер {val}: min = {min_value}, max = {max_value}")
+        mean_value = np.mean(cluster_pixels)
+        stats[val] = {'min': min_value, 'max': max_value, 'mean': mean_value}
+        print(f"Кластер {val}: min = {min_value}, max = {max_value}, mean = {mean_value}")
+
+    return stats
 
 
 def get_block_size(block_size: tuple[float, float], min_area_m2: float,
@@ -123,7 +129,67 @@ def get_block_size(block_size: tuple[float, float], min_area_m2: float,
 
     return get_block_size_from_meters_to_px(block_size, pixel_width_m, pixel_height_m)
 
+
 def get_block_size_from_meters_to_px(block_size: tuple[float, float],
                                      pixel_width_m: float, pixel_height_m: float) -> tuple[float, float]:
-    return int(block_size[0] // pixel_width_m), int(block_size[1] // pixel_height_m)
+    return int(block_size[0] // pixel_height_m), int(block_size[1] // pixel_width_m)
 
+
+def decompress_array(data: np.ndarray, block_size: tuple[int, int]) -> np.ndarray:
+    return data.repeat(block_size[0], axis=0).repeat(block_size[1], axis=1)
+
+def clipped_filepath(path):
+
+    input_path = Path(path)
+    now_ts = int(time.time())
+
+    return input_path.with_name(f"{input_path.stem}_clipped_{now_ts}{input_path.suffix}")
+
+def clustered_filepath(path, method):
+
+    input_path = Path(path)
+    now_ts = int(time.time())
+
+    return input_path.with_name(f"{input_path.stem}_{method}_{now_ts}.shp")
+
+
+def create_fertilizer_shapefile(
+        input_shp: str,
+        output_shp: str,
+        target_cluster_id: int,
+        target_fertilizer: float,
+        input_gdf: gpd.GeoDataFrame | None = None
+) -> None:
+    gdf = input_gdf if input_gdf is not None else gpd.read_file(input_shp)
+
+    if 'cluster_id' not in gdf.columns:
+        raise ValueError("Input shapefile must have 'cluster_id' and 'mean' columns")
+
+    # Извлечение словаря cluster_id -> mean
+    stats = {
+        int(row['cluster_id']): float(row['mean'])
+        for _, row in gdf.iterrows()
+        if not pd.isna(row['cluster_id']) and not pd.isna(row['mean'])
+    }
+
+    base_ndvi = stats.get(target_cluster_id)
+    if base_ndvi is None:
+        raise ValueError(f"Target cluster_id {target_cluster_id} not found")
+
+    # Функция для расчёта дозы удобрения
+    def calc_fertilizer(cluster_id, ndvi):
+        if ndvi == 0:
+            return 0
+        return round(target_fertilizer * (base_ndvi / ndvi), 2)
+
+    # Создаём новый столбец с дозами удобрений
+    def get_fertilizer(row):
+        cluster = int(row['cluster_id'])
+        ndvi = float(row['mean'])
+        return calc_fertilizer(cluster, ndvi)
+
+    gdf['fertilizer'] = gdf.apply(get_fertilizer, axis=1)
+
+    # Сохраняем в новый shapefile
+    gdf.to_file(output_shp)
+    print(f"Saved fertilizer shapefile to {output_shp}")
