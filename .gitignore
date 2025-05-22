@@ -23,9 +23,12 @@ env/
 *.shx
 *.cpg
 *.qmd
+*.dbf
 
 # Pyenv version file
 .python-version
 
 # Logs
 *.log
+
+*.env

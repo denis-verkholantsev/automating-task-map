@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from shapely.ops import polygonize
 from pathlib import Path
+from pyproj import CRS, Transformer
 import time
 
 
@@ -65,14 +66,14 @@ def get_ndvi_stats_by_ranges(ndvi_data, step=0.05):
     ranges = np.arange(-1, 1 + step, step)
 
     print(f"Статистика по диапазонам значений NDVI (в диапазоне от -1 до 1):")
-    
+
     for i in range(len(ranges) - 1):
         lower = ranges[i]
         upper = ranges[i + 1]
-        
+
         range_mask = (ndvi_data >= lower) & (ndvi_data < upper)
         range_vals = ndvi_data[range_mask]
-        
+
         if range_vals.size > 0:
             print(f"\nДиапазон: {lower:.2f} - {upper:.2f}")
             print(f"Количество пикселей: {range_vals.size}")
@@ -83,8 +84,6 @@ def get_ndvi_stats_by_ranges(ndvi_data, step=0.05):
         else:
             print(f"\nДиапазон: {lower:.2f} - {upper:.2f} - Нет данных")
 
-
-from pyproj import CRS, Transformer
 
 def convert_pixel_size_to_meters(pixel_width_deg, pixel_height_deg, center_lon, center_lat):
     crs_src = CRS("EPSG:4326")

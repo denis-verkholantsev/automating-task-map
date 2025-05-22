@@ -73,11 +73,3 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-# # Пример использования
-# calculate_ndvi_and_save(
-#     input_path='/home/dverholancev/study/degree/experience_2023/20230619_F14_Micasense.tif',
-#     output_path='ndvi_output.tif',
-#     red_band_index=3,
-#     nir_band_index=5
-# )

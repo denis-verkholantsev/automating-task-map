@@ -415,13 +415,13 @@ def parse_args():
     parser.add_argument(
         "input",
         type=str,
-        help="Путь к NDVI GeoTIFF-файлу"
+        help="path to input-NDVI GeoTIFF"
     )
 
     parser.add_argument(
         "--output", "-o",
         type=str,
-        help="Путь к выходному Shapefile (например, output.shp)"
+        help="path to output-NDVI .shp"
     )
 
     parser.add_argument(
@@ -429,13 +429,13 @@ def parse_args():
         type=int,
         default=4,
         required=True,
-        help="Количество кластеров"
+        help="clusters number"
     )
 
     parser.add_argument(
         "--min_area",
         type=float,
-        help="Минимальная площадь для фильтрации малых кластеров (в м²)"
+        help="min area in m2"
     )
 
     parser.add_argument(
@@ -443,7 +443,7 @@ def parse_args():
         type=float,
         nargs=2,
         metavar=("HEIGHT", "WIDTH"),
-        help="Сжать NDVI до блока (в метрах)"
+        help="compress size block"
     )
 
     parser.add_argument(
@@ -451,7 +451,7 @@ def parse_args():
         type=float,
         nargs=2,
         metavar=("HEIGHT", "WIDTH"),
-        help="Блочная постобработка (в метрах)"
+        help="work size block"
     )
 
     parser.add_argument(
@@ -464,13 +464,13 @@ def parse_args():
             "label_most_common",
             "label_nearest"
         ],
-        help="Метод агрегации областей кластеров"
+        help="small clusters aggregation method"
     )
 
     parser.add_argument(
         "--envfile",
         type=str,
-        help="Путь к .env"
+        help="path to .env file"
     )
 
     return parser.parse_args()

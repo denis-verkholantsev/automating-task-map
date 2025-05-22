@@ -84,31 +84,30 @@ class NDVIData:
         band_data = self._data[0]
         height, width = band_data.shape
 
-        # Вычисляем размер с паддингом
+        # размер с паддингом
         pad_height = (block_size[0] - height % block_size[0]) % block_size[0]
         pad_width = (block_size[1] - width % block_size[1]) % block_size[1]
 
-        # Паддинг снизу и справа
+        # паддинг снизу и справа
         padded = np.pad(band_data, ((0, pad_height), (0, pad_width)), mode='constant', constant_values=np.nan)
 
         new_height = (height + pad_height) // block_size[0]
         new_width = (width + pad_width) // block_size[1]
 
-        # Переформатируем для блочного усреднения
+        # переформатируем для блочного усреднения
         reshaped = padded.reshape(new_height, block_size[0], new_width, block_size[1])
 
-        # Усреднение по блокам
+        # усреднение по блокам
         compressed_band = np.nanmean(reshaped, axis=(1, 3))
 
-        # Обновляем _data, оставляя только один канал
+        # обновляем _data, оставляем один канал
         self._data = compressed_band[None, :, :]  # добавляем размерность для bands=1
 
-        # Обновляем размеры пикселя
+        # новые размеры пикселя
         self._pixel_height *= block_size[0]
         self._pixel_width *= block_size[1]
         self._pixel_area = abs(self._pixel_width * self._pixel_height)
 
-        # Обновляем профиль
         transform = self._profile['transform']
         new_transform = Affine(
             transform.a * block_size[1], transform.b, transform.c,
@@ -136,12 +135,11 @@ class NDVIData:
 
         self._data = decompressed
 
-        # Обновляем размеры пикселя
+        # новые размеры пикселя
         self._pixel_width /= W
         self._pixel_height /= H
         self._pixel_area = abs(self._pixel_width * self._pixel_height)
 
-        # Обновляем профиль
         transform = self._profile['transform']
         new_transform = Affine(
             transform.a / W, transform.b, transform.c,
