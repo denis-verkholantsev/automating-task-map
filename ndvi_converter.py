@@ -2,6 +2,8 @@ import numpy as np
 import rasterio
 import argparse
 
+from common import create_filepath
+
 SATURATION_VALUES = {
     'uint8': 255,
     'uint16': 65535,
@@ -49,15 +51,15 @@ def calculate_ndvi_and_save(input_path, output_path, red_band_index=2, nir_band_
             "dtype": "float32",
             "nodata": no_data_value
         })
-
-        with rasterio.open(output_path, "w", **out_meta) as dst:
+        out_path = output_path or create_filepath(output_path, 'tif', 'ndvi')
+        with rasterio.open(out_path, "w", **out_meta) as dst:
             dst.write(ndvi, 1)
 
 
 def main():
     parser = argparse.ArgumentParser(description='Calculate NDVI from multispectral image')
     parser.add_argument('input', help='Input multispectral raster file')
-    parser.add_argument('output', help='Output NDVI raster file')
+    parser.add_argument('--output', '-o', help='Output NDVI raster file')
     parser.add_argument('--red-band', type=int, default=3, help='Band index for Red channel (default: 3)')
     parser.add_argument('--nir-band', type=int, default=5, help='Band index for NIR channel (default: 5)')
 
