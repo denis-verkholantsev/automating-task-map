@@ -1,5 +1,5 @@
 from raster_clipper import RasterClipper
-from common import lines_to_polygon, decompress_array, clipped_filepath, clustered_filepath, create_fertilizer_shapefile
+from common import lines_to_polygon, decompress_array, create_filepath, create_fertilizer_shapefile
 from clusterable import NDVIData
 from cluster import KMeansRasterClustering, HDBSCANRasterClustering, BaseRasterClustering
 from config import Config
@@ -16,21 +16,36 @@ MAX_SIZE = 50000000
 # }
 
 def run_clipped(config):
-    ndvi = NDVIData.load("/home/dverholancev/study/degree/src/cliiped_mini.tif")
+    ndvi = NDVIData.load("/home/dverholancev/study/degree/app/ndvi_output.tif")
+    clipper = RasterClipper(
+        ndvi,
+        "/home/dverholancev/study/degree/src/boundary_field_14.shp",
+        'latin1',
+        lines_to_polygon)
+
+    ndvi = clipper.clip()
     ndvi.clean()
-    ndvi.compress((3, 3))
-    result = KMeansRasterClustering.fit(ndvi, 5, 0, clean_method='label_nearest', block_size=(15, 15), workers=config.WORKERS)
+    ndvi.compress((1, 1))
+    result, stats = KMeansRasterClustering.fit(ndvi, 5, 8, clean_method='label_nearest', block_size=(15, 15), workers=config.WORKERS)
     block = ndvi.compression_block
     ndvi.decompress()
     result = decompress_array(result, block)
-    KMeansRasterClustering.export_shapefile(result, 'clustered_0_compressed_15x15_label_nearest.shp', ndvi.transform, ndvi.crs)
+    KMeansRasterClustering.export_shapefile(result, 'clustered_compressed_8.shp', ndvi.transform, ndvi.crs)
 
 def run_compress():
-    ndvi = NDVIData.load("/home/dverholancev/study/degree/src/cliiped_mini.tif")
+    ndvi = NDVIData.load("/home/dverholancev/study/degree/app/ndvi_output.tif")
+    clipper = RasterClipper(
+        ndvi,
+        "/home/dverholancev/study/degree/src/boundary_field_14.shp",
+        'latin1',
+        lines_to_polygon)
+
+    ndvi = clipper.clip()
     ndvi.clean()
-    result, stats = KMeansRasterClustering.fit(ndvi, 5, 3, clean_method='label_nearest', block_size=(10, 10), workers=config.WORKERS)
-    gdf = KMeansRasterClustering.export_shapefile(result, 'clustered_3_20x20_label_nearest.shp', ndvi.transform, ndvi.crs, stats=stats)
-    create_fertilizer_shapefile('clustered_3_20x20_label_nearest.shp', 'out.shp',2, 60, gdf)
+    ndvi.save('clipped_last.tif')
+    result, stats = KMeansRasterClustering.fit(ndvi, 5, 5, clean_method='label_nearest', block_size=(15, 15), workers=config.WORKERS)
+    KMeansRasterClustering.export_shapefile(result, 'clustered_new_3_15x15_label_nearest.shp', ndvi.transform, ndvi.crs, stats=stats)
+    create_fertilizer_shapefile('clustered_new_3_15x15_label_nearest.shp', 'out_new.shp',2, 60)
 
 def run(config):
     ndvi = NDVIData.load("/home/dverholancev/study/degree/src/20230608_F14_Micasense_NDVI.tif")
@@ -77,7 +92,7 @@ def run_simple_grid():
 config = Config()
 # run_clipped(config)
 # run_hdbscan()
-run_compress()
+run_clipped(config)
 
 import argparse
 
@@ -93,7 +108,7 @@ def call(args):
 
         ndvi = clipper.clip()
         if args.save:
-            ndvi.save(clipped_filepath(args.input))
+            ndvi.save(create_filepath(args.input))
 
     to_decompress = False
     if args.compress_block:
@@ -123,7 +138,7 @@ def call(args):
             ndvi,
             min_cluster_area=min_cluster_area,
             min_samples=min_samples,
-            workers=-1
+            workers=config.WORKERS
         )
 
     if to_decompress:
@@ -134,7 +149,7 @@ def call(args):
     if args.export:
         BaseRasterClustering.export_shapefile(
             result,
-            args.shapefile or clustered_filepath(args.input, args.cluster_method),
+            args.shapefile or create_filepath(args.input, args.cluster_method),
             ndvi.transform,
             ndvi.crs,
             stats=stats

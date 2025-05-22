@@ -65,6 +65,8 @@ class NDVIData:
 
     def clean(self):
         self._data = np.where((self._data <= 0) | (self._data > 1), np.nan, self._data)
+        count_not_nan = np.count_nonzero(~np.isnan(self._data))
+        print(count_not_nan)
         print("NDVI cleaned")
 
     def save(self, path: str):
@@ -126,11 +128,6 @@ class NDVIData:
         print(f"Compressed 0-th band to shape {self._data.shape} with pixel size {self._pixel_width} x {self._pixel_height} m")
 
     def decompress(self):
-        """
-        Разжать данные без интерполяции.
-        Каждый пиксель становится прямоугольником H x W с одинаковыми значениями.
-        block_size — кортеж (H, W), с которым ранее сжималось.
-        """
         if not self.is_compressed():
             raise CompressException("Data is not compressed")
 

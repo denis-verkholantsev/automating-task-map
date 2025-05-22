@@ -375,7 +375,7 @@ class HDBSCANRasterClustering(BaseRasterClustering):
             ndvi: NDVIData,
             min_cluster_area: float = 50,
             min_samples: int | None = None,
-            workers: int | None = WORKERS) -> np.ndarray:
+            workers: int | None = -1) -> np.ndarray:
 
         min_cluster_area = max(1, int(min_cluster_area / (ndvi.pixel_width * ndvi.pixel_height)))
 

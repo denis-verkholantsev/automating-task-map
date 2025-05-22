@@ -138,20 +138,15 @@ def get_block_size_from_meters_to_px(block_size: tuple[float, float],
 def decompress_array(data: np.ndarray, block_size: tuple[int, int]) -> np.ndarray:
     return data.repeat(block_size[0], axis=0).repeat(block_size[1], axis=1)
 
-def clipped_filepath(path):
-
+def create_filepath(path: str, ext: str | None = None, *args):
     input_path = Path(path)
     now_ts = int(time.time())
+    parts = [str(arg) for arg in args if arg]
+    parts.append(str(now_ts))
+    result = "_".join(parts)
+    ext = ext or input_path.suffix or ''
 
-    return input_path.with_name(f"{input_path.stem}_clipped_{now_ts}{input_path.suffix}")
-
-def clustered_filepath(path, method):
-
-    input_path = Path(path)
-    now_ts = int(time.time())
-
-    return input_path.with_name(f"{input_path.stem}_{method}_{now_ts}.shp")
-
+    return input_path.with_name(f"{input_path.stem}_{result}.{ext}")
 
 def create_fertilizer_shapefile(
         input_shp: str,
