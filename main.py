@@ -1,7 +1,10 @@
+from tkinter.font import names
+
 from raster_clipper import RasterClipper
-from common import lines_to_polygon, decompress_array, create_filepath, create_fertilizer_shapefile
+from common import lines_to_polygon, decompress_array, create_filepath
+from fertilizer import create_fertilizer_shapefile_by_cluster_id
 from clusterable import NDVIData
-from cluster import KMeansRasterClustering, HDBSCANRasterClustering, BaseRasterClustering
+from cluster import KMeansRasterClustering, BaseRasterClustering
 from config import Config
 from grid import block_average_with_edges, export_shapefile
 
@@ -30,7 +33,9 @@ def run_clipped(config):
     block = ndvi.compression_block
     ndvi.decompress()
     result = decompress_array(result, block)
-    KMeansRasterClustering.export_shapefile(result, 'clustered_compressed_8.shp', ndvi.transform, ndvi.crs)
+    KMeansRasterClustering.export_shapefile(result, 'clustered_compressed_iiii.shp', ndvi.transform, ndvi.crs, stats=stats)
+    # create_fertilizer_shapefile_by_cluster_id('/home/dverholancev/study/degree/app/grid_10x10.shp', 'out_grid.shp',2, 60)
+
 
 def run_compress():
     ndvi = NDVIData.load("/home/dverholancev/study/degree/app/ndvi_output.tif")
@@ -99,47 +104,25 @@ import argparse
 def call(args):
     ndvi = NDVIData.load(args.input)
 
-    if args.border:
-        clipper = RasterClipper(
-            ndvi,
-            args.border,
-            'latin1',
-            lines_to_polygon)
-
-        ndvi = clipper.clip()
-        if args.save:
-            ndvi.save(create_filepath(args.input))
-
     to_decompress = False
     if args.compress_block:
-        ndvi.compress(args.compress_block, pixel=args.in_pixels)
+        ndvi.compress(args.compress_block)
         to_decompress = True
 
-    result, stats = None, None
-    if args.cluster_method == 'k-means':
-        use_mini_batch = True if ndvi.size() > 50000000 else False
-        n_clusters = args.clusters_number
-        min_cluster_area = args.min_area
-        postprocessing_method = args.postprocessing_method
-        work_block = args.work_block
-        result, stats = KMeansRasterClustering.fit(
-            ndvi,
-            n_clusters=n_clusters,
-            min_cluster_area=min_cluster_area,
-            clean_method=postprocessing_method,
-            block_size=work_block,
-            use_mini_batch=use_mini_batch,
-            workers=config.WORKERS
-        )
-    elif args.cluster_method == 'hdbscan':
-        min_cluster_area = args.min_area
-        min_samples = args.min_samples
-        result = HDBSCANRasterClustering.fit(
-            ndvi,
-            min_cluster_area=min_cluster_area,
-            min_samples=min_samples,
-            workers=config.WORKERS
-        )
+    use_mini_batch = True if ndvi.size() > 50000000 else False
+    n_clusters = args.clusters_number
+    min_cluster_area = args.min_area
+    postprocessing_method = args.postprocessing_method
+    work_block = args.work_block
+    result, stats = KMeansRasterClustering.fit(
+        ndvi,
+        n_clusters=n_clusters,
+        min_cluster_area=min_cluster_area,
+        clean_method=postprocessing_method,
+        block_size=work_block,
+        use_mini_batch=use_mini_batch,
+        workers=config.WORKERS
+    )
 
     if to_decompress:
         block = ndvi.compression_block
@@ -155,65 +138,53 @@ def call(args):
             stats=stats
         )
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="NDVI clustering tool")
 
     parser.add_argument(
-        "--input",
+        "input",
         type=str,
-        required=True,
         help="Путь к NDVI GeoTIFF-файлу"
     )
 
     parser.add_argument(
-        "--output",
+        "--output", "-o",
         type=str,
         help="Путь к выходному Shapefile (например, output.shp)"
     )
 
     parser.add_argument(
-        "--border",
-        type=str,
-        help="Путь к файлу границы .shp (lines/polygon) (например, border.shp)"
-    )
-
-    parser.add_argument(
-        "--save_clipped",
-        type=bool,
-        help="Сохранить обрезанный tif"
-    )
-
-    parser.add_argument(
-        "--cluster_method",
-        type=str,
-        choices=[
-            "k-means",
-            "hdbscan",
-        ],
-        required=True,
-        help="Метод кластеризации"
-    )
-
-    parser.add_argument(
-        "--clusters_number",
+        "--clusters_number", "-k",
         type=int,
+        default=4,
         help="Количество кластеров"
     )
 
     parser.add_argument(
-        "--min_cluster_size",
+        "--min_area",
         type=float,
-        help="Минимальная площадь кластера в блоке в м2"
+        help="Минимальная площадь для фильтрации малых кластеров (в м²)"
+    )
+
+    parser.add_argument(
+        "--compress",
+        type=float,
+        nargs=2,
+        metavar=("HEIGHT", "WIDTH"),
+        help="Сжать NDVI до блока (в метрах)"
     )
 
     parser.add_argument(
         "--work_block",
-        action="store_true",
-        help="Обработка блоков"
+        type=float,
+        nargs=2,
+        metavar=("HEIGHT", "WIDTH"),
+        help="Блочная постобработка (в метрах)"
     )
 
     parser.add_argument(
-        "--postprocessing_method",
+        "--postprocessing",
         type=str,
         choices=[
             "most_common_label",
@@ -222,36 +193,14 @@ def parse_args():
             "label_most_common",
             "label_nearest"
         ],
-        required=True,
         help="Метод агрегации областей кластеров"
     )
 
-    parser.add_argument(
-        "--min_area",
-        type=float,
-        default=100.0,
-        help="Минимальная площадь для фильтрации малых кластеров (в м²)"
-    )
-
-    parser.add_argument(
-        "--min_samples",
-        type=int,
-        help="Минимальное количество соседей"
-    )
-
-    parser.add_argument(
-        "--compress_block",
-        type=float,
-        nargs=2,
-        metavar=("HEIGHT", "WIDTH"),
-        help="Сжать NDVI до блока (в метрах)"
-    )
-
-    parser.add_argument(
-        "--in_pixels",
-        type=bool,
-        help="Путь к файлу границы .shp (lines/polygon) (например, border.shp)"
-    )
-
-
     return parser.parse_args()
+
+def main():
+    args = parse_args()
+    call(args)
+
+if __name__ == '__main__':
+    main()

@@ -78,11 +78,6 @@ class NDVIData:
         print(f"NDVI saved to {path}")
 
     def compress(self, block_size: tuple[float, float], pixel: bool=False):
-        """
-        Сжать 0-й канал усреднением блоков block_size x block_size.
-        Изменит _data, _profile, _pixel_width, _pixel_height.
-        """
-
         if not pixel:
             block_size = (int(block_size[0] // self.pixel_height), int(block_size[1] // self.pixel_width))
 
@@ -200,5 +195,5 @@ class NDVIData:
             return self._compression_block
 
     def size(self):
-        if self._data:
+        if self._data is not None and self._data.size > 0:
             return self._data.shape[1] * self._data.shape[2]

@@ -4,7 +4,6 @@ import numpy as np
 from shapely.ops import polygonize
 from pathlib import Path
 import time
-import pandas as pd
 
 
 GEOM_TYPES_TO_RETURN = {"Polygon", 'MultiPolygon'}
@@ -138,6 +137,7 @@ def get_block_size_from_meters_to_px(block_size: tuple[float, float],
 def decompress_array(data: np.ndarray, block_size: tuple[int, int]) -> np.ndarray:
     return data.repeat(block_size[0], axis=0).repeat(block_size[1], axis=1)
 
+
 def create_filepath(path: str, ext: str | None = None, *args):
     input_path = Path(path)
     now_ts = int(time.time())
@@ -147,44 +147,3 @@ def create_filepath(path: str, ext: str | None = None, *args):
     ext = ext or input_path.suffix or ''
 
     return input_path.with_name(f"{input_path.stem}_{result}.{ext}")
-
-def create_fertilizer_shapefile(
-        input_shp: str,
-        output_shp: str,
-        target_cluster_id: int,
-        target_fertilizer: float,
-        input_gdf: gpd.GeoDataFrame | None = None
-) -> None:
-    gdf = input_gdf if input_gdf is not None else gpd.read_file(input_shp)
-
-    if 'cluster_id' not in gdf.columns:
-        raise ValueError("Input shapefile must have 'cluster_id' and 'mean' columns")
-
-    # Извлечение словаря cluster_id -> mean
-    stats = {
-        int(row['cluster_id']): float(row['mean'])
-        for _, row in gdf.iterrows()
-        if not pd.isna(row['cluster_id']) and not pd.isna(row['mean'])
-    }
-
-    base_ndvi = stats.get(target_cluster_id)
-    if base_ndvi is None:
-        raise ValueError(f"Target cluster_id {target_cluster_id} not found")
-
-    # Функция для расчёта дозы удобрения
-    def calc_fertilizer(cluster_id, ndvi):
-        if ndvi == 0:
-            return 0
-        return round(target_fertilizer * (base_ndvi / ndvi), 2)
-
-    # Создаём новый столбец с дозами удобрений
-    def get_fertilizer(row):
-        cluster = int(row['cluster_id'])
-        ndvi = float(row['mean'])
-        return calc_fertilizer(cluster, ndvi)
-
-    gdf['fertilizer'] = gdf.apply(get_fertilizer, axis=1)
-
-    # Сохраняем в новый shapefile
-    gdf.to_file(output_shp)
-    print(f"Saved fertilizer shapefile to {output_shp}")

@@ -3,7 +3,9 @@ from numpy.lib.stride_tricks import as_strided
 from rasterio.features import shapes
 from shapely.geometry import shape
 import geopandas as gpd
+
 from clusterable import NDVIData
+from common import create_filepath
 
 
 def fast_block_average(arr: np.ndarray, block_h: int, block_w: int) -> np.ndarray:
@@ -20,12 +22,12 @@ def fast_block_average(arr: np.ndarray, block_h: int, block_w: int) -> np.ndarra
     )
 
     blocks = as_strided(arr_cropped, shape=new_shape, strides=new_strides)
-    means = np.nanmean(blocks, axis=(2, 3))  # игнорируем NaN, считаем среднее
+    means = np.nanmean(blocks, axis=(2, 3))  # игнорируем nan, считаем среднее
 
     return means.repeat(block_h, axis=0).repeat(block_w, axis=1)
 
 
-def block_average_with_edges(ndvi: NDVIData, block_size: tuple[float, float]) -> np.ndarray:
+def block_average_with_edges(ndvi: NDVIData, block_size: tuple[float, float] = (10, 10)) -> np.ndarray:
     block_h = int(block_size[0] // ndvi.pixel_height)
     block_w = int(block_size[1] // ndvi.pixel_width)
 
@@ -71,6 +73,47 @@ def export_shapefile(data, output_shp: str, transform, crs) -> None:
         raise ValueError("No values for export (all removed?)")
 
     geoms, means = zip(*shapes_list)
-    gdf = gpd.GeoDataFrame({'means': means, 'geometry': geoms}, crs=crs)
+    gdf = gpd.GeoDataFrame({'mean': means, 'geometry': geoms}, crs=crs)
     gdf.to_file(output_shp)
     print(f"Shapefile saved to {output_shp}")
+
+
+import argparse
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Grid-based mean NDVI")
+
+    parser.add_argument(
+        "input",
+        type=str,
+        help="Путь к входному NDVI GeoTIFF"
+    )
+
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        help="Путь к выходному Shapefile (например, output.shp)"
+    )
+
+    parser.add_argument(
+        "--block",
+        type=float,
+        nargs=2,
+        metavar=("HEIGHT", "WIDTH"),
+        help="Размер блока для усреднения в метрах (высота, ширина)"
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    ndvi = NDVIData.load(args.input)
+    averaged = block_average_with_edges(ndvi, tuple(args.block))
+    export_shapefile(averaged, args.output or create_filepath(args.input, 'shp', 'grid'), ndvi.transform, ndvi.crs)
+
+
+if __name__ == "__main__":
+    main()
+

@@ -1,21 +1,23 @@
 from abc import ABC
 import geopandas as gpd
 import numpy as np
+import argparse
 from sklearn.cluster import KMeans, MiniBatchKMeans
-from hdbscan import HDBSCAN
 from rasterio.features import shapes
 from shapely.geometry import shape
 from scipy.ndimage import label, generate_binary_structure, binary_dilation
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
-from collections import deque, OrderedDict
+from collections import deque
 from functools import partial
 
 from clusterable import NDVIData
-from common import clusters_info, get_block_size
+from common import clusters_info, get_block_size, create_filepath, decompress_array
 from exceptions import ArgumentException
+from config import Config
 
 WORKERS = 4
+MAX_SIZE_DEFAULT_KMEANS = 50000000
 
 class BaseRasterClustering(ABC):
 
@@ -33,7 +35,7 @@ class BaseRasterClustering(ABC):
 
     @staticmethod
     def export_shapefile(data, output_shp: str, transform, crs, stats: dict=None) -> gpd.GeoDataFrame:
-        # Ensure we're working with 2D data
+        # в 2d
         data_2d = data.squeeze()
         mask = ~np.isnan(data_2d)
         prepared_data = np.nan_to_num(data_2d, nan=-1).astype(np.int16)
@@ -56,12 +58,12 @@ class BaseRasterClustering(ABC):
         return gdf
 
     @staticmethod
-    def _process_block_with_most_common_label(block: np.ndarray, min_area: float, pixel_width: float, pixel_height: float, connectivity=4) -> np.ndarray:
+    def _process_block_with_most_common_label(block: np.ndarray, *args) -> np.ndarray:
         processed = block.copy()
         nan_mask = np.isnan(processed)
-        processed[nan_mask] = -1  # Временная метка для NaN
+        processed[nan_mask] = -1  # временная метка для NaN
 
-        # Найдём наиболее популярное значение (кластер) в блоке
+        # наиболее популярное значение (кластер) в блоке
         valid_labels = processed[processed > 0]
         most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
 
@@ -131,7 +133,7 @@ class BaseRasterClustering(ABC):
         min_pixels = max(1, int(min_area / (pixel_width * pixel_height)))
         processed = block.copy()
         nan_mask = np.isnan(processed)
-        processed[nan_mask] = -1  # временная метка для NaN
+        processed[nan_mask] = -1  # NaN
 
         h, w = processed.shape
         visited = np.zeros((h, w), dtype=bool)
@@ -193,15 +195,15 @@ class BaseRasterClustering(ABC):
         min_pixels = max(1, int(min_area / (pixel_width * pixel_height)))
         processed = block.copy()
         nan_mask = np.isnan(processed)
-        processed[nan_mask] = -1  # Временная метка для NaN
+        processed[nan_mask] = -1  # NaN
 
         structure = None
         if connectivity == 4:
-            structure = generate_binary_structure(2, 1)  # 2D, связность 1 (четыре соседа)
+            structure = generate_binary_structure(2, 1)  # связность 1 (четыре соседа)
         elif connectivity == 8:
-            structure = generate_binary_structure(2, 2)  # 2D, связность 2 (восемь соседей)
+            structure = generate_binary_structure(2, 2)  # связность 2 (восемь соседей)
 
-        # Найдём наиболее популярное значение (кластер) в блоке
+        # наиболее популярное значение в блоке
         valid_labels = processed[processed > 0]
         most_common_label = np.bincount(valid_labels.astype(int)).argmax() if len(valid_labels) > 0 else -1
 
@@ -285,7 +287,7 @@ class BaseRasterClustering(ABC):
         n_rows, n_cols = clustered.shape
         processed = np.zeros_like(clustered)
 
-        # Prepare blocks for processing
+        # разбиваем на блоки
         blocks = []
         for i in range(0, n_rows, block_size[0]):
             for j in range(0, n_cols, block_size[1]):
@@ -295,7 +297,7 @@ class BaseRasterClustering(ABC):
         clean_func = cls.get_clean_method(clean_method)  # или любой другой
         wrapper = partial(cls._process_block_wrapper, clean_method=clean_func)
 
-        # Process blocks in parallel
+        # параллельно обрабатываем
         with ProcessPoolExecutor(max_workers=WORKERS) as executor:
             results = list(tqdm(
                 executor.map(wrapper, blocks),
@@ -303,7 +305,7 @@ class BaseRasterClustering(ABC):
                 desc="Processing blocks"
             ))
 
-        # Reconstruct the full array
+        # пересобираем обработанные
         idx = 0
         for i in range(0, n_rows, block_size[0]):
             for j in range(0, n_cols, block_size[1]):
@@ -328,13 +330,13 @@ class KMeansRasterClustering(BaseRasterClustering):
         if clean_method == 'most_common_label' and not block_size:
             raise ArgumentException('need block size for most_common_label method')
 
-        # Flatten and prepare data
-        data_2d = ndvi.data.squeeze()  # Ensure we're working with 2D
+        # в 1d, избавимся от Nan
+        data_2d = ndvi.data.squeeze()  # 2D
         flat = data_2d.flatten()
         mask = ~np.isnan(flat)
         valid_data = flat[mask].reshape(-1, 1)
 
-        # Run KMeans clustering
+        # k-means
         print(f"Running KMeans with {n_clusters} clusters...")
         if use_mini_batch:
             kmeans = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=batch_size)
@@ -344,17 +346,17 @@ class KMeansRasterClustering(BaseRasterClustering):
             kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(valid_data)
             labels = kmeans.labels_
 
-        # Reconstruct clustered array
+        # пересобираем и возвращаем nan
         clustered = np.full(flat.shape, np.nan)
-        clustered[mask] = labels + 1  # +1 to avoid 0 being a cluster
+        clustered[mask] = labels + 1  # +1
         result = clustered.reshape(data_2d.shape)
         print("Clustering done.")
 
-        # Analyze clusters
+        # анализ по кластерам
         unique = np.unique(result[~np.isnan(result)])
         stats = clusters_info(result, unique, flat)
 
-        # Clean small clusters if requested
+        # чистим мелкие области, если они есть
         if min_cluster_area:
             result = cls._clean_small_clusters(
                 result,
@@ -369,41 +371,117 @@ class KMeansRasterClustering(BaseRasterClustering):
         return result, stats
 
 
-class HDBSCANRasterClustering(BaseRasterClustering):
-    @classmethod
-    def fit(cls,
-            ndvi: NDVIData,
-            min_cluster_area: float = 50,
-            min_samples: int | None = None,
-            workers: int | None = -1) -> np.ndarray:
+def call(config, args):
+    ndvi = NDVIData.load(args.input)
+    ndvi.clean()
 
-        min_cluster_area = max(1, int(min_cluster_area / (ndvi.pixel_width * ndvi.pixel_height)))
+    to_decompress = False
+    if args.compress:
+        ndvi.compress(args.compress)
+        to_decompress = True
 
-        # Flatten and prepare data
-        data_2d = ndvi.data.squeeze()  # Ensure we're working with 2D
-        flat = data_2d.flatten()
-        mask = ~np.isnan(flat)
-        valid_data = flat[mask].reshape(-1, 1)
+    use_mini_batch = ndvi.size() > config.MAX_SIZE_DEFAULT_KMEANS
+    n_clusters = args.clusters_number
+    min_cluster_area = args.min_area
+    postprocessing_method = args.postprocessing_method
+    work_block = args.work_block
+    result, stats = KMeansRasterClustering.fit(
+        ndvi,
+        n_clusters=n_clusters,
+        min_cluster_area=min_cluster_area,
+        clean_method=postprocessing_method,
+        block_size=work_block,
+        use_mini_batch=use_mini_batch,
+        workers=config.WORKERS
+    )
 
-        print("Running HDBSCAN clustering...")
-        clusterer = HDBSCAN(
-            min_cluster_size=min_cluster_area,
-            min_samples=min_samples,
-            core_dist_n_jobs=workers,
-            algorithm='best',
-            leaf_size=15,
-        ).fit(valid_data)
+    if to_decompress:
+        block = ndvi.compression_block
+        ndvi.decompress()
+        result = decompress_array(result, block)
 
-        labels = clusterer.labels_  # -1 is noise
+    KMeansRasterClustering.export_shapefile(
+        result,
+        args.output or create_filepath(args.input, 'shp', 'kmeans'),
+        ndvi.transform,
+        ndvi.crs,
+        stats=stats
+    )
 
-        # Reconstruct clustered array
-        clustered = np.full(flat.shape, np.nan)
-        clustered[mask] = labels + 1
-        result = clustered.reshape(data_2d.shape)
-        print("Clustering done.")
 
-        # Analyze clusters
-        unique = np.unique(result[~np.isnan(result)])
-        clusters_info(result, unique, flat)
+def parse_args():
+    parser = argparse.ArgumentParser(description="NDVI clustering tool")
 
-        return result
+    parser.add_argument(
+        "input",
+        type=str,
+        help="Путь к NDVI GeoTIFF-файлу"
+    )
+
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        help="Путь к выходному Shapefile (например, output.shp)"
+    )
+
+    parser.add_argument(
+        "--clusters_number", "-k",
+        type=int,
+        default=4,
+        required=True,
+        help="Количество кластеров"
+    )
+
+    parser.add_argument(
+        "--min_area",
+        type=float,
+        help="Минимальная площадь для фильтрации малых кластеров (в м²)"
+    )
+
+    parser.add_argument(
+        "--compress",
+        type=float,
+        nargs=2,
+        metavar=("HEIGHT", "WIDTH"),
+        help="Сжать NDVI до блока (в метрах)"
+    )
+
+    parser.add_argument(
+        "--work_block",
+        type=float,
+        nargs=2,
+        metavar=("HEIGHT", "WIDTH"),
+        help="Блочная постобработка (в метрах)"
+    )
+
+    parser.add_argument(
+        "--postprocessing_method",
+        type=str,
+        choices=[
+            "most_common_label",
+            "bfs_most_common",
+            "bfs_nearest",
+            "label_most_common",
+            "label_nearest"
+        ],
+        help="Метод агрегации областей кластеров"
+    )
+
+    parser.add_argument(
+        "--envfile",
+        type=str,
+        help="Путь к .env"
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    config = Config()
+    call(config, args)
+
+
+if __name__ == '__main__':
+    main()
+
