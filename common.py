@@ -37,54 +37,6 @@ def lines_to_polygon(input_lines_shp: str, encoding: str | None = 'utf-8') -> st
     return output_polygon_shp
 
 
-def analyze_ndvi(ndvi_array):
-    valid = ndvi_array[~np.isnan(ndvi_array)]
-
-    if valid.size == 0:
-        print("Нет валидных NDVI значений.")
-        return
-
-    print(f"Количество пикселей: {valid.size}")
-    print(f"Минимум: {valid.min():.4f}")
-    print(f"Максимум: {valid.max():.4f}")
-    print(f"Среднее: {valid.mean():.4f}")
-    print(f"Медиана: {np.median(valid):.4f}")
-    print(f"Уникальных значений: {np.unique(valid).size}")
-
-    plt.hist(valid, bins=50, color='green', edgecolor='black')
-    plt.title("Распределение NDVI")
-    plt.xlabel("NDVI значение")
-    plt.ylabel("Частота")
-    plt.grid(True)
-    plt.show()
-
-
-def get_ndvi_stats_by_ranges(ndvi_data, step=0.05):
-    mask = (ndvi_data >= -1) & (ndvi_data <= 1)
-    ndvi_data = ndvi_data[mask]
-
-    ranges = np.arange(-1, 1 + step, step)
-
-    print(f"Статистика по диапазонам значений NDVI (в диапазоне от -1 до 1):")
-
-    for i in range(len(ranges) - 1):
-        lower = ranges[i]
-        upper = ranges[i + 1]
-
-        range_mask = (ndvi_data >= lower) & (ndvi_data < upper)
-        range_vals = ndvi_data[range_mask]
-
-        if range_vals.size > 0:
-            print(f"\nДиапазон: {lower:.2f} - {upper:.2f}")
-            print(f"Количество пикселей: {range_vals.size}")
-            print(f"Минимум: {np.min(range_vals)}")
-            print(f"Максимум: {np.max(range_vals)}")
-            print(f"Среднее: {np.mean(range_vals)}")
-            print(f"Медиана: {np.median(range_vals)}")
-        else:
-            print(f"\nДиапазон: {lower:.2f} - {upper:.2f} - Нет данных")
-
-
 def convert_pixel_size_to_meters(pixel_width_deg, pixel_height_deg, center_lon, center_lat):
     crs_src = CRS("EPSG:4326")
     utm_zone = int((center_lon + 180) / 6) + 1
@@ -105,7 +57,7 @@ def convert_pixel_size_to_meters(pixel_width_deg, pixel_height_deg, center_lon, 
 
 
 def clusters_info(result, unique, flat):
-    print("Информация о кластерах:")
+    print("Clusters info:")
     stats = {}
     for val in unique:
         cluster_pixels = flat[result.flatten() == val]  # Пиксели, принадлежащие текущему кластеру
@@ -113,7 +65,7 @@ def clusters_info(result, unique, flat):
         max_value = np.max(cluster_pixels)
         mean_value = np.mean(cluster_pixels)
         stats[val] = {'min': min_value, 'max': max_value, 'mean': mean_value}
-        print(f"Кластер {val}: min = {min_value}, max = {max_value}, mean = {mean_value}")
+        print(f"Сluster {val}: min = {min_value}, max = {max_value}, mean = {mean_value}")
 
     return stats
 
