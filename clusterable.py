@@ -65,8 +65,6 @@ class NDVIData:
 
     def clean(self):
         self._data = np.where((self._data <= 0) | (self._data > 1), np.nan, self._data)
-        count_not_nan = np.count_nonzero(~np.isnan(self._data))
-        print(count_not_nan)
         print("NDVI cleaned")
 
     def save(self, path: str):

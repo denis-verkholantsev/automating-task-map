@@ -5,6 +5,16 @@ import numpy as np
 
 from common import create_filepath
 
+
+def required_units_sum(gdf):
+    gdf = gdf.to_crs("EPSG:32637")
+    gdf['area_m2'] = gdf.geometry.area
+    gdf['total_fert'] = gdf['fertiliz'] * gdf['area_m2']
+
+    total_sum = gdf['total_fert'].sum()
+    print(f"Total fertilizer required: {total_sum:.2f} units")
+
+
 def create_fertilizer_shapefile_manual(
         input_shp: str,
         output_shp: str,
@@ -22,7 +32,8 @@ def create_fertilizer_shapefile_manual(
         fert = fertilizer_by_cluster.get(cluster_id, 0)  # 0 если кластер не указан
         return fert
 
-    gdf['fertilizer'] = gdf.apply(get_fertilizer, axis=1)
+    gdf['fertiliz'] = gdf.apply(get_fertilizer, axis=1)
+    required_units_sum(gdf)
 
     gdf.to_file(output_shp)
     print(f"Saved fertilizer shapefile to {output_shp}")
@@ -63,7 +74,8 @@ def create_fertilizer_shapefile_by_cluster_id(
         ndvi = float(row['mean'])
         return calc_fertilizer(cluster, ndvi)
 
-    gdf['fertilizer'] = gdf.apply(get_fertilizer, axis=1)
+    gdf['fertiliz'] = gdf.apply(get_fertilizer, axis=1)
+    required_units_sum(gdf)
 
     # в новый shp
     gdf.to_file(output_shp)
@@ -89,6 +101,7 @@ def create_fertilizer_shapefile_by_ndvi(
         return fert
 
     gdf['fertiliz'] = gdf['mean'].apply(lambda ndvi: calc_fertilizer(float(ndvi)))
+    required_units_sum(gdf)
 
     gdf.to_file(output_shp)
     print(f"Saved fertilizer shapefile to {output_shp}")
